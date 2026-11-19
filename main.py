@@ -892,6 +892,27 @@ def exportar_relatorio_csv():
 
 make_button(rep_actions, "Exportar CSV (Excel)", exportar_relatorio_csv).pack(side="left")
 
+def navegar_mes(delta):
+    try:
+        ano, mes = periodo_selecionado()
+        if ano is None:
+            ano, mes = date.today().year, date.today().month
+        indice = ano * 12 + (mes - 1) + delta
+        novo_ano, novo_mes = divmod(indice, 12)
+        if not 2000 <= novo_ano <= 2100:
+            raise ValueError("O período deve estar entre 2000 e 2100.")
+        period_mode.set("Mês atual")
+        month_choice.set(f"{novo_mes + 1:02d}")
+        year_choice.delete(0, "end")
+        year_choice.insert(0, str(novo_ano))
+        aplicar_periodo()
+    except (ValueError, tk.TclError) as exc:
+        messagebox.showerror("Período inválido", str(exc))
+
+make_button(rep_actions, "◀ Mês anterior", lambda: navegar_mes(-1), bg=SIDEBAR_HOVER).pack(side="left", padx=(12, 4))
+make_button(rep_actions, "Próximo mês ▶", lambda: navegar_mes(1), bg=SIDEBAR_HOVER).pack(side="left", padx=4)
+make_button(rep_actions, "Todos os períodos", lambda: (period_mode.set("Todos os períodos"), aplicar_periodo()), bg=SIDEBAR_HOVER).pack(side="left", padx=4)
+
 rep_cards = tk.Frame(rep_body, bg=BG)
 rep_cards.pack(fill="x", pady=18)
 
@@ -908,6 +929,19 @@ report_text = tk.Label(
     font=(FONT, 10), justify="left"
 )
 report_text.pack(anchor="w", padx=20, pady=(0, 20))
+
+rep_breakdown = tk.Frame(rep_body, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
+rep_breakdown.pack(fill="both", expand=True, pady=(16, 0))
+tk.Label(rep_breakdown, text="Despesas por categoria", bg=SURFACE, fg=TEXT,
+         font=(FONT, 12, "bold")).pack(anchor="w", padx=20, pady=(16, 8))
+rep_category_tree = ttk.Treeview(rep_breakdown, columns=("categoria", "total", "percentual"),
+                                 show="headings", height=7)
+for col, label, width in (("categoria", "CATEGORIA", 270),
+                          ("total", "TOTAL GASTO", 180),
+                          ("percentual", "% DAS DESPESAS", 150)):
+    rep_category_tree.heading(col, text=label)
+    rep_category_tree.column(col, width=width, anchor="w" if col == "categoria" else "center")
+rep_category_tree.pack(fill="both", expand=True, padx=20, pady=(0, 18))
 
 # ============================================================
 # CONFIGURAÇÕES
@@ -1055,6 +1089,12 @@ def update_report():
         index = valores.index(max(valores))
         top_category = categorias[index]
         top_value = valores[index]
+
+    for item in rep_category_tree.get_children():
+        rep_category_tree.delete(item)
+    for nome, valor in pares:
+        percentual = (valor / despesa * 100) if despesa else 0.0
+        rep_category_tree.insert("", "end", values=(nome, money(valor), f"{percentual:.1f}%"))
 
     metas = consultar_metas(ano, mes)
     metas_estouradas = [(nome, limite, gasto) for _, nome, limite, gasto in metas if gasto > limite]
