@@ -1,4 +1,6 @@
 import sqlite3
+import csv
+from tkinter import filedialog
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date, datetime
@@ -23,6 +25,12 @@ from view import (
     bar_valores,
     porcentagem_gasta,
     pie_valores,
+    resumo_periodo,
+    despesas_por_categoria,
+    lancamentos_periodo,
+    definir_meta,
+    remover_meta,
+    consultar_metas,
 )
 
 # ============================================================
@@ -96,6 +104,9 @@ style.configure(
 
 # ---------- Estado ----------
 current_page = "Dashboard"
+period_mode = tk.StringVar(value="Mês atual")
+period_month = tk.IntVar(value=date.today().month)
+period_year = tk.IntVar(value=date.today().year)
 page_frames = {}
 
 # ============================================================
@@ -340,6 +351,40 @@ tk.Label(
     text="Aqui está o resumo do seu orçamento.",
     bg=BG, fg=MUTED, font=(FONT, 10)
 ).pack(anchor="w", pady=(4, 0))
+
+# Filtro compartilhado entre dashboard e relatórios
+period_bar = tk.Frame(dash_inner, bg=BG)
+period_bar.pack(fill="x", pady=(0, 12))
+tk.Label(period_bar, text="Período:", bg=BG, fg=MUTED, font=(FONT, 10, "bold")).pack(side="left", padx=(0, 10))
+period_choice = ttk.Combobox(period_bar, values=("Mês atual", "Todos os períodos"),
+                             textvariable=period_mode, state="readonly", width=19)
+period_choice.pack(side="left", padx=(0, 8))
+month_choice = ttk.Combobox(period_bar, values=[f"{i:02d}" for i in range(1, 13)],
+                            state="readonly", width=5)
+month_choice.set(f"{date.today().month:02d}")
+month_choice.pack(side="left", padx=4)
+year_choice = tk.Spinbox(period_bar, from_=2000, to=2100, width=7, font=(FONT, 10))
+year_choice.delete(0, "end")
+year_choice.insert(0, str(date.today().year))
+year_choice.pack(side="left", padx=4)
+
+def periodo_selecionado():
+    if period_mode.get() == "Todos os períodos":
+        return None, None
+    return int(year_choice.get()), int(month_choice.get())
+
+def aplicar_periodo(event=None):
+    try:
+        update_dashboard()
+        update_report()
+        refresh_categories()
+    except (ValueError, tk.TclError):
+        messagebox.showerror("Período inválido", "Selecione um mês e ano válidos.")
+
+period_choice.bind("<<ComboboxSelected>>", aplicar_periodo)
+month_choice.bind("<<ComboboxSelected>>", aplicar_periodo)
+year_choice.bind("<Return>", aplicar_periodo)
+make_button(period_bar, "Aplicar", aplicar_periodo).pack(side="left", padx=8)
 
 # Cards
 cards_frame = tk.Frame(dash_inner, bg=BG)
@@ -661,19 +706,25 @@ section_title(cat_head, "Categorias", "Organize seus gastos do seu jeito.")
 cat_list_box = tk.Frame(cat_body, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
 cat_list_box.pack(fill="both", expand=True)
 
-cat_tree = ttk.Treeview(cat_list_box, columns=("id", "nome"), show="headings")
+cat_tree = ttk.Treeview(cat_list_box, columns=("id", "nome", "meta"), show="headings")
 cat_tree.heading("id", text="ID")
 cat_tree.heading("nome", text="CATEGORIA")
+cat_tree.heading("meta", text="GASTO / META DO PERÍODO")
 cat_tree.column("id", width=100, anchor="center")
-cat_tree.column("nome", width=450, anchor="w")
+cat_tree.column("nome", width=300, anchor="w")
+cat_tree.column("meta", width=290, anchor="center")
 cat_tree.pack(fill="both", expand=True, padx=15, pady=15)
 
 
 def refresh_categories():
     for item in cat_tree.get_children():
         cat_tree.delete(item)
+    ano, mes = periodo_selecionado()
+    metas = {id_: (limite, gasto) for id_, _, limite, gasto in consultar_metas(ano, mes)}
     for id_, name in ver_categorias():
-        cat_tree.insert("", "end", values=(id_, name))
+        meta = metas.get(id_)
+        meta_text = (f"{money(meta[1])} / {money(meta[0])}" if meta else "Sem meta")
+        cat_tree.insert("", "end", values=(id_, name, meta_text))
 
 
 def new_category_dialog():
@@ -707,11 +758,50 @@ def new_category_dialog():
 
     make_button(win, "Criar categoria", save).pack(fill="x", padx=24)
 
+def manage_category_goal():
+    try:
+        id_, nome = selected_category()
+    except ValueError as exc:
+        messagebox.showwarning("Atenção", str(exc))
+        return
+    win = tk.Toplevel(root)
+    win.title("Meta mensal")
+    win.geometry("400x245")
+    win.resizable(False, False)
+    win.configure(bg=SURFACE)
+    win.transient(root)
+    win.grab_set()
+    tk.Label(win, text=f"Meta mensal: {nome}", bg=SURFACE, fg=TEXT,
+             font=(FONT, 16, "bold")).pack(anchor="w", padx=22, pady=(22, 8))
+    tk.Label(win, text="Limite de gastos (R$)", bg=SURFACE, fg=MUTED,
+             font=(FONT, 10)).pack(anchor="w", padx=22)
+    entry = tk.Entry(win, font=(FONT, 11))
+    entry.pack(fill="x", padx=22, pady=9, ipady=6)
+    def save():
+        try:
+            definir_meta(id_, entry.get())
+            win.destroy()
+            refresh_categories()
+            update_report()
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc), parent=win)
+    def remove():
+        remover_meta(id_)
+        win.destroy()
+        refresh_categories()
+        update_report()
+    actions = tk.Frame(win, bg=SURFACE)
+    actions.pack(fill="x", padx=22, pady=10)
+    make_button(actions, "Salvar meta", save).pack(side="left", padx=(0, 8))
+    make_button(actions, "Remover meta", remove, bg=RED).pack(side="left")
+
+
 def selected_category():
     selected = cat_tree.focus()
     if not selected:
         raise ValueError("Selecione uma categoria na tabela.")
-    return cat_tree.item(selected)["values"]
+    values = cat_tree.item(selected)["values"]
+    return values[0], values[1]
 
 
 def edit_selected_category():
@@ -776,6 +866,32 @@ section_title(
     "Resumo consolidado dos dados cadastrados no sistema."
 )
 
+rep_period_label = tk.Label(rep_body, text="", bg=BG, fg=MUTED, font=(FONT, 10))
+rep_period_label.pack(anchor="w")
+rep_actions = tk.Frame(rep_body, bg=BG)
+rep_actions.pack(fill="x", pady=(10, 0))
+
+def exportar_relatorio_csv():
+    try:
+        ano, mes = periodo_selecionado()
+        rows = lancamentos_periodo(ano, mes)
+        destino = filedialog.asksaveasfilename(
+            title="Exportar relatório", defaultextension=".csv",
+            filetypes=[("Arquivo CSV", "*.csv")],
+            initialfile="controle_facil_relatorio.csv",
+        )
+        if not destino:
+            return
+        with open(destino, "w", encoding="utf-8-sig", newline="") as arquivo:
+            writer = csv.writer(arquivo, delimiter=";")
+            writer.writerow(["ID", "Tipo", "Categoria", "Data", "Valor (R$)"])
+            writer.writerows(rows)
+        messagebox.showinfo("Relatório exportado", "Arquivo CSV salvo com sucesso.")
+    except Exception as exc:
+        messagebox.showerror("Erro na exportação", str(exc))
+
+make_button(rep_actions, "Exportar CSV (Excel)", exportar_relatorio_csv).pack(side="left")
+
 rep_cards = tk.Frame(rep_body, bg=BG)
 rep_cards.pack(fill="x", pady=18)
 
@@ -811,7 +927,7 @@ info.pack(fill="x", pady=18)
 for title, value in [
     ("Aplicação", "Controle Fácil"),
     ("Banco de dados", "SQLite"),
-    ("Versão da interface", "2.0"),
+    ("Versão da interface", "2.1"),
     ("Objetivo", "Controle pessoal de receitas e despesas"),
 ]:
     row = tk.Frame(info, bg=SURFACE)
@@ -861,8 +977,9 @@ def refresh_all():
 
 
 def update_dashboard():
-    receita, despesa, saldo = bar_valores()
-    pct = porcentagem_gasta()
+    ano, mes = periodo_selecionado()
+    receita, despesa, saldo = resumo_periodo(ano, mes)
+    pct = (despesa / receita * 100) if receita else 0.0
 
     for child in cards_frame.winfo_children():
         child.destroy()
@@ -899,7 +1016,8 @@ def update_dashboard():
     canvas1.get_tk_widget().pack(fill="both", expand=True)
     plt.close(fig1)
 
-    categorias, valores = pie_valores()
+    pares = despesas_por_categoria(ano, mes)
+    categorias, valores = [p[0] for p in pares], [p[1] for p in pares]
     fig2, ax2 = plt.subplots(figsize=(5.8, 2.7), dpi=85)
     if valores:
         ax2.pie(
@@ -924,9 +1042,12 @@ def update_dashboard():
 
 
 def update_report():
-    receita, despesa, saldo = bar_valores()
-    pct = porcentagem_gasta()
-    categorias, valores = pie_valores()
+    ano, mes = periodo_selecionado()
+    receita, despesa, saldo = resumo_periodo(ano, mes)
+    pct = (despesa / receita * 100) if receita else 0.0
+    pares = despesas_por_categoria(ano, mes)
+    categorias, valores = [p[0] for p in pares], [p[1] for p in pares]
+    rep_period_label.config(text=(f"Período: {mes:02d}/{ano}" if mes else "Período: todos os lançamentos"))
 
     top_category = "Nenhuma"
     top_value = 0
@@ -935,13 +1056,18 @@ def update_report():
         top_category = categorias[index]
         top_value = valores[index]
 
+    metas = consultar_metas(ano, mes)
+    metas_estouradas = [(nome, limite, gasto) for _, nome, limite, gasto in metas if gasto > limite]
+    resumo_metas = (f"Metas excedidas:        {len(metas_estouradas)} de {len(metas)}"
+                    if metas else "Metas financeiras:      Nenhuma cadastrada")
     report_text.config(
         text=(
             f"Receitas totais:        {money(receita)}\n"
             f"Despesas totais:        {money(despesa)}\n"
             f"Saldo atual:            {money(saldo)}\n"
             f"Receita comprometida:   {pct:.2f}%\n"
-            f"Maior categoria:        {top_category} ({money(top_value)})"
+            f"Maior categoria:        {top_category} ({money(top_value)})\\n"
+            f"{resumo_metas}"
         )
     )
 
@@ -1008,6 +1134,7 @@ make_button(
 ).pack(side="left", padx=4)
 
 # Categoria
+make_button(cat_head, "Definir meta", manage_category_goal, bg=GREEN).pack(side="right", padx=4)
 make_button(cat_head, "Excluir categoria", delete_selected_category, bg=RED).pack(side="right", padx=4)
 make_button(cat_head, "Editar categoria", edit_selected_category, bg=PRIMARY).pack(side="right", padx=4)
 
