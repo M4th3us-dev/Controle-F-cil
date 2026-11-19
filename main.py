@@ -10,6 +10,8 @@ from tkcalendar import DateEntry
 from view import (
     inicializar_banco,
     inserir_categoria,
+    editar_categoria,
+    excluir_categoria,
     inserir_receitas,
     inserir_gastos,
     ver_categorias,
@@ -584,15 +586,15 @@ def edit_selected():
     tk.Label(body, text="Categoria", bg=SURFACE, fg=MUTED,
              font=(FONT, 9, "bold")).pack(anchor="w")
     categories = [row[1] for row in ver_categorias()]
-    combo = ttk.Combobox(body, values=categories, state="readonly", font=(FONT, 10))
+    combo = ttk.Combobox(body, values=categories + ([categoria] if categoria not in categories else []), state="readonly", font=(FONT, 10))
     combo.pack(fill="x", pady=(5, 15))
     combo.set(categoria)
 
     tk.Label(body, text="Data", bg=SURFACE, fg=MUTED,
              font=(FONT, 9, "bold")).pack(anchor="w")
-    data_entry = tk.Entry(body, font=(FONT, 10), relief="solid", bd=1)
-    data_entry.pack(fill="x", ipady=7, pady=(5, 15))
-    data_entry.insert(0, data)
+    data_entry = DateEntry(body, date_pattern="dd/mm/yyyy", font=(FONT, 10))
+    data_entry.pack(fill="x", pady=(5, 15))
+    data_entry.set_date(date.fromisoformat(data))
 
     tk.Label(body, text="Valor", bg=SURFACE, fg=MUTED,
              font=(FONT, 9, "bold")).pack(anchor="w")
@@ -607,9 +609,9 @@ def edit_selected():
                 raise ValueError("Informe a data.")
 
             if tipo == "Receita":
-                editar_receita(int(id_), data_entry.get().strip(), amount)
+                editar_receita(int(id_), data_entry.get_date().isoformat(), amount, combo.get())
             else:
-                editar_gasto(int(id_), combo.get(), data_entry.get().strip(), amount)
+                editar_gasto(int(id_), combo.get(), data_entry.get_date().isoformat(), amount)
 
             win.destroy()
             refresh_all()
@@ -704,6 +706,59 @@ def new_category_dialog():
             messagebox.showerror("Erro", str(exc), parent=win)
 
     make_button(win, "Criar categoria", save).pack(fill="x", padx=24)
+
+def selected_category():
+    selected = cat_tree.focus()
+    if not selected:
+        raise ValueError("Selecione uma categoria na tabela.")
+    return cat_tree.item(selected)["values"]
+
+
+def edit_selected_category():
+    try:
+        id_, nome = selected_category()
+    except ValueError as exc:
+        messagebox.showwarning("Atenção", str(exc))
+        return
+    win = tk.Toplevel(root)
+    win.title("Editar categoria")
+    win.geometry("390x210")
+    win.resizable(False, False)
+    win.configure(bg=SURFACE)
+    win.transient(root)
+    win.grab_set()
+    tk.Label(win, text="Editar categoria", bg=SURFACE, fg=TEXT,
+             font=(FONT, 18, "bold")).pack(anchor="w", padx=24, pady=(24, 10))
+    entry = tk.Entry(win, font=(FONT, 11), relief="solid", bd=1)
+    entry.insert(0, nome)
+    entry.pack(fill="x", padx=24, pady=(0, 16), ipady=7)
+    entry.focus_set()
+
+    def save():
+        try:
+            editar_categoria(id_, entry.get())
+            win.destroy()
+            refresh_all()
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc), parent=win)
+
+    make_button(win, "Salvar alterações", save).pack(fill="x", padx=24)
+
+
+def delete_selected_category():
+    try:
+        id_, nome = selected_category()
+    except ValueError as exc:
+        messagebox.showwarning("Atenção", str(exc))
+        return
+    if not messagebox.askyesno("Confirmar exclusão", f"Excluir a categoria '{nome}'?"):
+        return
+    try:
+        excluir_categoria(id_)
+        refresh_all()
+    except Exception as exc:
+        messagebox.showerror("Não foi possível excluir", str(exc))
+
 
 # ============================================================
 # RELATÓRIOS — versão visual inicial
@@ -953,6 +1008,9 @@ make_button(
 ).pack(side="left", padx=4)
 
 # Categoria
+make_button(cat_head, "Excluir categoria", delete_selected_category, bg=RED).pack(side="right", padx=4)
+make_button(cat_head, "Editar categoria", edit_selected_category, bg=PRIMARY).pack(side="right", padx=4)
+
 make_button(
     cat_head, "+ Nova categoria",
     new_category_dialog,
