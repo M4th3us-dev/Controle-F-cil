@@ -1,6 +1,6 @@
 import sqlite3
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 
 DB_PATH = Path(__file__).resolve().parent / "financeiro.db"
 
@@ -54,6 +54,41 @@ def _valor_float(valor):
     return round(numero, 2)
 
 
+def validar_data(data):
+    texto = str(data).strip()
+    try:
+        return date.fromisoformat(texto).isoformat()
+    except ValueError:
+        try:
+            return datetime.strptime(texto, "%d/%m/%Y").date().isoformat()
+        except ValueError as exc:
+            raise ValueError("Data inválida. Use DD/MM/AAAA ou AAAA-MM-DD.") from exc
+
+
+def editar_categoria(id_categoria, novo_nome):
+    novo_nome = str(novo_nome).strip()
+    if not novo_nome:
+        raise ValueError("Informe o nome da categoria.")
+    with conectar() as con:
+        anterior = con.execute("SELECT nome FROM Categoria WHERE id = ?", (int(id_categoria),)).fetchone()
+        if anterior is None:
+            raise ValueError("Categoria não encontrada.")
+        con.execute("UPDATE Categoria SET nome = ? WHERE id = ?", (novo_nome, int(id_categoria)))
+        con.execute("UPDATE Gastos SET categoria = ? WHERE categoria = ? COLLATE NOCASE", (novo_nome, anterior[0]))
+        con.execute("UPDATE Receitas SET categoria = ? WHERE categoria = ? COLLATE NOCASE", (novo_nome, anterior[0]))
+
+
+def excluir_categoria(id_categoria):
+    with conectar() as con:
+        row = con.execute("SELECT nome FROM Categoria WHERE id = ?", (int(id_categoria),)).fetchone()
+        if row is None:
+            raise ValueError("Categoria não encontrada.")
+        total = con.execute("SELECT (SELECT COUNT(*) FROM Gastos WHERE categoria = ? COLLATE NOCASE) + (SELECT COUNT(*) FROM Receitas WHERE categoria = ? COLLATE NOCASE)", (row[0], row[0])).fetchone()[0]
+        if total:
+            raise ValueError("Esta categoria possui lançamentos. Reclassifique-os antes de excluir.")
+        con.execute("DELETE FROM Categoria WHERE id = ?", (int(id_categoria),))
+
+
 def inserir_categoria(nome):
     nome = str(nome).strip()
     if not nome:
@@ -80,7 +115,7 @@ def inserir_receitas(data, valor, categoria="Receita"):
     with conectar() as con:
         con.execute(
             "INSERT INTO Receitas (categoria, adicionado_em, valor) VALUES (?, ?, ?)",
-            (categoria, data, valor),
+            (categoria, validar_data(data), valor),
         )
 
 
@@ -98,7 +133,7 @@ def inserir_gastos(categoria, data, valor):
     with conectar() as con:
         con.execute(
             "INSERT INTO Gastos (categoria, retirado_em, valor) VALUES (?, ?, ?)",
-            (categoria, data, valor),
+            (categoria, validar_data(data), valor),
         )
 
 
@@ -112,13 +147,22 @@ def deletar_gastos(id_gasto):
         con.execute("DELETE FROM Gastos WHERE id = ?", (int(id_gasto),))
 
 
-def editar_receita(id_receita, data, valor):
+def editar_receita(id_receita, data, valor, categoria=None):
     valor = _valor_float(valor)
     with conectar() as con:
-        cur = con.execute(
-            "UPDATE Receitas SET adicionado_em = ?, valor = ? WHERE id = ?",
-            (str(data).strip(), valor, int(id_receita)),
-        )
+        if categoria is None:
+            cur = con.execute(
+                "UPDATE Receitas SET adicionado_em = ?, valor = ? WHERE id = ?",
+                (validar_data(data), valor, int(id_receita)),
+            )
+        else:
+            categoria = str(categoria).strip()
+            if not categoria:
+                raise ValueError("Selecione uma categoria.")
+            cur = con.execute(
+                "UPDATE Receitas SET categoria = ?, adicionado_em = ?, valor = ? WHERE id = ?",
+                (categoria, validar_data(data), valor, int(id_receita)),
+            )
         if cur.rowcount == 0:
             raise ValueError("Receita não encontrada.")
 
@@ -132,7 +176,7 @@ def editar_gasto(id_gasto, categoria, data, valor):
     with conectar() as con:
         cur = con.execute(
             "UPDATE Gastos SET categoria = ?, retirado_em = ?, valor = ? WHERE id = ?",
-            (categoria, str(data).strip(), valor, int(id_gasto)),
+            (categoria, validar_data(data), valor, int(id_gasto)),
         )
         if cur.rowcount == 0:
             raise ValueError("Despesa não encontrada.")
