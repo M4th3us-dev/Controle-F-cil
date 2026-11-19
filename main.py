@@ -353,28 +353,74 @@ tk.Label(
 ).pack(anchor="w", pady=(4, 0))
 
 # Filtro compartilhado entre dashboard e relatórios
-period_bar = tk.Frame(dash_inner, bg=BG)
-period_bar.pack(fill="x", pady=(0, 12))
-tk.Label(period_bar, text="Período:", bg=BG, fg=MUTED, font=(FONT, 10, "bold")).pack(side="left", padx=(0, 10))
-period_choice = ttk.Combobox(period_bar, values=("Mês atual", "Todos os períodos"),
-                             textvariable=period_mode, state="readonly", width=19)
-period_choice.pack(side="left", padx=(0, 8))
-month_choice = ttk.Combobox(period_bar, values=[f"{i:02d}" for i in range(1, 13)],
-                            state="readonly", width=5)
+# Mesmo visual dos cards: superfície branca, borda suave e controles uniformes.
+style.configure(
+    "Period.TCombobox",
+    font=(FONT, 10),
+    foreground=TEXT,
+    fieldbackground=SURFACE,
+    background=SURFACE,
+    arrowcolor=MUTED,
+    bordercolor=BORDER,
+    lightcolor=BORDER,
+    darkcolor=BORDER,
+    relief="flat",
+    padding=(10, 7),
+)
+style.map(
+    "Period.TCombobox",
+    fieldbackground=[("readonly", SURFACE), ("disabled", "#F4F6FA")],
+    foreground=[("readonly", TEXT), ("disabled", MUTED)],
+    background=[("readonly", SURFACE)],
+    selectbackground=[("readonly", SURFACE)],
+    selectforeground=[("readonly", TEXT)],
+)
+
+period_bar = tk.Frame(dash_inner, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
+period_bar.pack(fill="x", pady=(0, 18))
+period_content = tk.Frame(period_bar, bg=SURFACE)
+period_content.pack(fill="x", padx=18, pady=14)
+
+tk.Label(period_content, text="FILTRAR PERÍODO", bg=SURFACE, fg=MUTED,
+         font=(FONT, 9, "bold")).pack(side="left", padx=(0, 18))
+
+period_choice = ttk.Combobox(
+    period_content, values=("Mês atual", "Todos os períodos"),
+    textvariable=period_mode, state="readonly", width=19,
+    style="Period.TCombobox", font=(FONT, 10),
+)
+period_choice.pack(side="left", padx=(0, 10), ipady=2)
+
+month_choice = ttk.Combobox(
+    period_content, values=[f"{i:02d}" for i in range(1, 13)],
+    state="readonly", width=5, style="Period.TCombobox", font=(FONT, 10),
+)
 month_choice.set(f"{date.today().month:02d}")
-month_choice.pack(side="left", padx=4)
-year_choice = tk.Spinbox(period_bar, from_=2000, to=2100, width=7, font=(FONT, 10))
-year_choice.delete(0, "end")
-year_choice.insert(0, str(date.today().year))
-year_choice.pack(side="left", padx=4)
+month_choice.pack(side="left", padx=(0, 10), ipady=2)
+
+year_choice = ttk.Combobox(
+    period_content, values=[str(i) for i in range(2100, 1999, -1)],
+    state="readonly", width=7, style="Period.TCombobox", font=(FONT, 10),
+)
+year_choice.set(str(date.today().year))
+year_choice.pack(side="left", padx=(0, 12), ipady=2)
 
 def periodo_selecionado():
     if period_mode.get() == "Todos os períodos":
         return None, None
-    return int(year_choice.get()), int(month_choice.get())
+    ano, mes = int(year_choice.get()), int(month_choice.get())
+    if not (2000 <= ano <= 2100 and 1 <= mes <= 12):
+        raise ValueError("Período fora do intervalo permitido.")
+    return ano, mes
+
+def atualizar_estado_periodo(event=None):
+    estado = "disabled" if period_mode.get() == "Todos os períodos" else "readonly"
+    month_choice.configure(state=estado)
+    year_choice.configure(state=estado)
 
 def aplicar_periodo(event=None):
     try:
+        atualizar_estado_periodo()
         update_dashboard()
         update_report()
         refresh_categories()
@@ -383,8 +429,15 @@ def aplicar_periodo(event=None):
 
 period_choice.bind("<<ComboboxSelected>>", aplicar_periodo)
 month_choice.bind("<<ComboboxSelected>>", aplicar_periodo)
-year_choice.bind("<Return>", aplicar_periodo)
-make_button(period_bar, "Aplicar", aplicar_periodo).pack(side="left", padx=8)
+year_choice.bind("<<ComboboxSelected>>", aplicar_periodo)
+
+apply_button = tk.Button(
+    period_content, text="Aplicar filtro", command=aplicar_periodo,
+    bg=PRIMARY, fg="white", activebackground=PRIMARY_HOVER,
+    activeforeground="white", font=(FONT, 9, "bold"),
+    relief="flat", bd=0, cursor="hand2", padx=15, pady=8,
+)
+apply_button.pack(side="right")
 
 # Cards
 cards_frame = tk.Frame(dash_inner, bg=BG)
