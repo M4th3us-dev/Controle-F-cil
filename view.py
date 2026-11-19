@@ -30,6 +30,12 @@ def inicializar_banco():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS MetasCategoria (
+                categoria_id INTEGER PRIMARY KEY REFERENCES Categoria(id) ON DELETE CASCADE,
+                limite REAL NOT NULL CHECK(limite > 0)
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS Gastos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 categoria TEXT NOT NULL,
@@ -211,6 +217,86 @@ def tabela():
         itens.append((item[0], "Receita", item[1], item[2], item[3]))
 
     return sorted(itens, key=lambda x: (str(x[3]), x[0]), reverse=True)
+
+
+
+def _periodo(ano=None, mes=None):
+    if ano is None or mes is None:
+        return None
+    ano, mes = int(ano), int(mes)
+    if not 1 <= mes <= 12 or not 1900 <= ano <= 9999:
+        raise ValueError("Mês ou ano inválido.")
+    return f"{ano:04d}-{mes:02d}"
+
+
+def resumo_periodo(ano=None, mes=None):
+    periodo = _periodo(ano, mes)
+    with conectar() as con:
+        if periodo is None:
+            receita = con.execute("SELECT COALESCE(SUM(valor), 0) FROM Receitas").fetchone()[0]
+            gasto = con.execute("SELECT COALESCE(SUM(valor), 0) FROM Gastos").fetchone()[0]
+        else:
+            receita = con.execute(
+                "SELECT COALESCE(SUM(valor), 0) FROM Receitas WHERE substr(adicionado_em, 1, 7) = ?",
+                (periodo,),
+            ).fetchone()[0]
+            gasto = con.execute(
+                "SELECT COALESCE(SUM(valor), 0) FROM Gastos WHERE substr(retirado_em, 1, 7) = ?",
+                (periodo,),
+            ).fetchone()[0]
+    receita, gasto = float(receita or 0), float(gasto or 0)
+    return receita, gasto, receita - gasto
+
+
+def despesas_por_categoria(ano=None, mes=None):
+    periodo = _periodo(ano, mes)
+    with conectar() as con:
+        if periodo is None:
+            rows = con.execute(
+                "SELECT categoria, SUM(valor) FROM Gastos GROUP BY categoria ORDER BY SUM(valor) DESC"
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT categoria, SUM(valor) FROM Gastos "
+                "WHERE substr(retirado_em, 1, 7) = ? GROUP BY categoria ORDER BY SUM(valor) DESC",
+                (periodo,),
+            ).fetchall()
+    return [(nome, float(valor)) for nome, valor in rows]
+
+
+def lancamentos_periodo(ano=None, mes=None):
+    periodo = _periodo(ano, mes)
+    if periodo is None:
+        return tabela()
+    return [item for item in tabela() if str(item[3]).startswith(periodo)]
+
+
+def definir_meta(id_categoria, valor):
+    valor = _valor_float(valor)
+    with conectar() as con:
+        existe = con.execute("SELECT 1 FROM Categoria WHERE id = ?", (int(id_categoria),)).fetchone()
+        if not existe:
+            raise ValueError("Categoria não encontrada.")
+        con.execute(
+            "INSERT INTO MetasCategoria (categoria_id, limite) VALUES (?, ?) "
+            "ON CONFLICT(categoria_id) DO UPDATE SET limite = excluded.limite",
+            (int(id_categoria), valor),
+        )
+
+
+def remover_meta(id_categoria):
+    with conectar() as con:
+        con.execute("DELETE FROM MetasCategoria WHERE categoria_id = ?", (int(id_categoria),))
+
+
+def consultar_metas(ano=None, mes=None):
+    gastos = dict(despesas_por_categoria(ano, mes))
+    with conectar() as con:
+        rows = con.execute(
+            "SELECT c.id, c.nome, m.limite FROM MetasCategoria m "
+            "JOIN Categoria c ON c.id = m.categoria_id ORDER BY c.nome"
+        ).fetchall()
+    return [(id_, nome, float(limite), gastos.get(nome, 0.0)) for id_, nome, limite in rows]
 
 
 def bar_valores():
