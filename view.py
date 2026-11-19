@@ -1,6 +1,6 @@
 import sqlite3
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 
 DB_PATH = Path(__file__).resolve().parent / "financeiro.db"
 
@@ -30,6 +30,12 @@ def inicializar_banco():
             )
         """)
         con.execute("""
+            CREATE TABLE IF NOT EXISTS MetasCategoria (
+                categoria_id INTEGER PRIMARY KEY REFERENCES Categoria(id) ON DELETE CASCADE,
+                limite REAL NOT NULL CHECK(limite > 0)
+            )
+        """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS Gastos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 categoria TEXT NOT NULL,
@@ -52,6 +58,41 @@ def _valor_float(valor):
     if numero <= 0:
         raise ValueError("O valor deve ser maior que zero.")
     return round(numero, 2)
+
+
+def validar_data(data):
+    texto = str(data).strip()
+    try:
+        return date.fromisoformat(texto).isoformat()
+    except ValueError:
+        try:
+            return datetime.strptime(texto, "%d/%m/%Y").date().isoformat()
+        except ValueError as exc:
+            raise ValueError("Data inválida. Use DD/MM/AAAA ou AAAA-MM-DD.") from exc
+
+
+def editar_categoria(id_categoria, novo_nome):
+    novo_nome = str(novo_nome).strip()
+    if not novo_nome:
+        raise ValueError("Informe o nome da categoria.")
+    with conectar() as con:
+        anterior = con.execute("SELECT nome FROM Categoria WHERE id = ?", (int(id_categoria),)).fetchone()
+        if anterior is None:
+            raise ValueError("Categoria não encontrada.")
+        con.execute("UPDATE Categoria SET nome = ? WHERE id = ?", (novo_nome, int(id_categoria)))
+        con.execute("UPDATE Gastos SET categoria = ? WHERE categoria = ? COLLATE NOCASE", (novo_nome, anterior[0]))
+        con.execute("UPDATE Receitas SET categoria = ? WHERE categoria = ? COLLATE NOCASE", (novo_nome, anterior[0]))
+
+
+def excluir_categoria(id_categoria):
+    with conectar() as con:
+        row = con.execute("SELECT nome FROM Categoria WHERE id = ?", (int(id_categoria),)).fetchone()
+        if row is None:
+            raise ValueError("Categoria não encontrada.")
+        total = con.execute("SELECT (SELECT COUNT(*) FROM Gastos WHERE categoria = ? COLLATE NOCASE) + (SELECT COUNT(*) FROM Receitas WHERE categoria = ? COLLATE NOCASE)", (row[0], row[0])).fetchone()[0]
+        if total:
+            raise ValueError("Esta categoria possui lançamentos. Reclassifique-os antes de excluir.")
+        con.execute("DELETE FROM Categoria WHERE id = ?", (int(id_categoria),))
 
 
 def inserir_categoria(nome):
@@ -80,7 +121,7 @@ def inserir_receitas(data, valor, categoria="Receita"):
     with conectar() as con:
         con.execute(
             "INSERT INTO Receitas (categoria, adicionado_em, valor) VALUES (?, ?, ?)",
-            (categoria, data, valor),
+            (categoria, validar_data(data), valor),
         )
 
 
@@ -98,7 +139,7 @@ def inserir_gastos(categoria, data, valor):
     with conectar() as con:
         con.execute(
             "INSERT INTO Gastos (categoria, retirado_em, valor) VALUES (?, ?, ?)",
-            (categoria, data, valor),
+            (categoria, validar_data(data), valor),
         )
 
 
@@ -112,13 +153,22 @@ def deletar_gastos(id_gasto):
         con.execute("DELETE FROM Gastos WHERE id = ?", (int(id_gasto),))
 
 
-def editar_receita(id_receita, data, valor):
+def editar_receita(id_receita, data, valor, categoria=None):
     valor = _valor_float(valor)
     with conectar() as con:
-        cur = con.execute(
-            "UPDATE Receitas SET adicionado_em = ?, valor = ? WHERE id = ?",
-            (str(data).strip(), valor, int(id_receita)),
-        )
+        if categoria is None:
+            cur = con.execute(
+                "UPDATE Receitas SET adicionado_em = ?, valor = ? WHERE id = ?",
+                (validar_data(data), valor, int(id_receita)),
+            )
+        else:
+            categoria = str(categoria).strip()
+            if not categoria:
+                raise ValueError("Selecione uma categoria.")
+            cur = con.execute(
+                "UPDATE Receitas SET categoria = ?, adicionado_em = ?, valor = ? WHERE id = ?",
+                (categoria, validar_data(data), valor, int(id_receita)),
+            )
         if cur.rowcount == 0:
             raise ValueError("Receita não encontrada.")
 
@@ -132,7 +182,7 @@ def editar_gasto(id_gasto, categoria, data, valor):
     with conectar() as con:
         cur = con.execute(
             "UPDATE Gastos SET categoria = ?, retirado_em = ?, valor = ? WHERE id = ?",
-            (categoria, str(data).strip(), valor, int(id_gasto)),
+            (categoria, validar_data(data), valor, int(id_gasto)),
         )
         if cur.rowcount == 0:
             raise ValueError("Despesa não encontrada.")
@@ -167,6 +217,86 @@ def tabela():
         itens.append((item[0], "Receita", item[1], item[2], item[3]))
 
     return sorted(itens, key=lambda x: (str(x[3]), x[0]), reverse=True)
+
+
+
+def _periodo(ano=None, mes=None):
+    if ano is None or mes is None:
+        return None
+    ano, mes = int(ano), int(mes)
+    if not 1 <= mes <= 12 or not 1900 <= ano <= 9999:
+        raise ValueError("Mês ou ano inválido.")
+    return f"{ano:04d}-{mes:02d}"
+
+
+def resumo_periodo(ano=None, mes=None):
+    periodo = _periodo(ano, mes)
+    with conectar() as con:
+        if periodo is None:
+            receita = con.execute("SELECT COALESCE(SUM(valor), 0) FROM Receitas").fetchone()[0]
+            gasto = con.execute("SELECT COALESCE(SUM(valor), 0) FROM Gastos").fetchone()[0]
+        else:
+            receita = con.execute(
+                "SELECT COALESCE(SUM(valor), 0) FROM Receitas WHERE substr(adicionado_em, 1, 7) = ?",
+                (periodo,),
+            ).fetchone()[0]
+            gasto = con.execute(
+                "SELECT COALESCE(SUM(valor), 0) FROM Gastos WHERE substr(retirado_em, 1, 7) = ?",
+                (periodo,),
+            ).fetchone()[0]
+    receita, gasto = float(receita or 0), float(gasto or 0)
+    return receita, gasto, receita - gasto
+
+
+def despesas_por_categoria(ano=None, mes=None):
+    periodo = _periodo(ano, mes)
+    with conectar() as con:
+        if periodo is None:
+            rows = con.execute(
+                "SELECT categoria, SUM(valor) FROM Gastos GROUP BY categoria ORDER BY SUM(valor) DESC"
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT categoria, SUM(valor) FROM Gastos "
+                "WHERE substr(retirado_em, 1, 7) = ? GROUP BY categoria ORDER BY SUM(valor) DESC",
+                (periodo,),
+            ).fetchall()
+    return [(nome, float(valor)) for nome, valor in rows]
+
+
+def lancamentos_periodo(ano=None, mes=None):
+    periodo = _periodo(ano, mes)
+    if periodo is None:
+        return tabela()
+    return [item for item in tabela() if str(item[3]).startswith(periodo)]
+
+
+def definir_meta(id_categoria, valor):
+    valor = _valor_float(valor)
+    with conectar() as con:
+        existe = con.execute("SELECT 1 FROM Categoria WHERE id = ?", (int(id_categoria),)).fetchone()
+        if not existe:
+            raise ValueError("Categoria não encontrada.")
+        con.execute(
+            "INSERT INTO MetasCategoria (categoria_id, limite) VALUES (?, ?) "
+            "ON CONFLICT(categoria_id) DO UPDATE SET limite = excluded.limite",
+            (int(id_categoria), valor),
+        )
+
+
+def remover_meta(id_categoria):
+    with conectar() as con:
+        con.execute("DELETE FROM MetasCategoria WHERE categoria_id = ?", (int(id_categoria),))
+
+
+def consultar_metas(ano=None, mes=None):
+    gastos = dict(despesas_por_categoria(ano, mes))
+    with conectar() as con:
+        rows = con.execute(
+            "SELECT c.id, c.nome, m.limite FROM MetasCategoria m "
+            "JOIN Categoria c ON c.id = m.categoria_id ORDER BY c.nome"
+        ).fetchall()
+    return [(id_, nome, float(limite), gastos.get(nome, 0.0)) for id_, nome, limite in rows]
 
 
 def bar_valores():
