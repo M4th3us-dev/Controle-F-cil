@@ -1066,7 +1066,7 @@ def update_report():
             f"Despesas totais:        {money(despesa)}\n"
             f"Saldo atual:            {money(saldo)}\n"
             f"Receita comprometida:   {pct:.2f}%\n"
-            f"Maior categoria:        {top_category} ({money(top_value)})\\n"
+            f"Maior categoria:        {top_category} ({money(top_value)})\n"
             f"{resumo_metas}"
         )
     )
