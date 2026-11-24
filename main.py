@@ -102,6 +102,92 @@ style.configure(
     thickness=9,
 )
 
+# Barra de rolagem personalizada, sem elementos nativos do Windows.
+class ModernScrollbar(tk.Canvas):
+    def __init__(self, parent, command, bg=BG):
+        super().__init__(parent, width=12, bg=bg, highlightthickness=0, bd=0)
+        self.command = command
+        self.first, self.last = 0.0, 1.0
+        self.hover = False
+        self.drag_offset = None
+        self.bind("<Configure>", self.redraw)
+        self.bind("<Enter>", self.enter)
+        self.bind("<Leave>", self.leave)
+        self.bind("<Button-1>", self.press)
+        self.bind("<B1-Motion>", self.drag)
+        self.bind("<ButtonRelease-1>", self.release)
+
+    def set(self, first, last):
+        self.first, self.last = float(first), float(last)
+        self.redraw()
+
+    def geometry_thumb(self):
+        height = max(1, self.winfo_height() - 8)
+        fraction = min(1.0, max(0.0, self.last - self.first))
+        size = min(height, max(24, height * fraction))
+        travel = height - size
+        top = 4 + travel * self.first / max(1e-9, 1 - fraction)
+        return top, size, travel, fraction
+
+    def redraw(self, event=None):
+        self.delete("all")
+        if self.last - self.first >= 0.99999:
+            return
+        top, size, _, _ = self.geometry_thumb()
+        bottom = top + size
+        color = PRIMARY if self.hover or self.drag_offset is not None else "#A4AEC2"
+        self.create_line(6, 4, 6, max(4, self.winfo_height()-4),
+                         fill="#E4E8F0", width=6, capstyle=tk.ROUND)
+        self.create_line(6, top+3, 6, max(top+3, bottom-3),
+                         fill=color, width=6, capstyle=tk.ROUND)
+
+    def enter(self, event):
+        self.hover = True
+        self.redraw()
+
+    def leave(self, event):
+        self.hover = False
+        self.redraw()
+
+    def press(self, event):
+        top, size, travel, fraction = self.geometry_thumb()
+        if travel <= 0:
+            return
+        self.drag_offset = event.y - top if top <= event.y <= top+size else size/2
+        self.drag(event)
+
+    def drag(self, event):
+        if self.drag_offset is None:
+            return
+        _, _, travel, fraction = self.geometry_thumb()
+        if travel > 0:
+            position = (event.y - self.drag_offset - 4) / travel
+            self.command("moveto", max(0, min(1, position)) * (1-fraction))
+        self.redraw()
+
+    def release(self, event):
+        self.drag_offset = None
+        self.redraw()
+
+
+def scroll_dashboard(event):
+    # Limita a rolagem à área do dashboard, inclusive seus widgets filhos.
+    widget = event.widget
+    while widget is not None:
+        if widget is dash_scroll_canvas or widget is dash_scroll:
+            delta = getattr(event, "delta", 0)
+            units = -max(1, abs(delta)//120) if delta > 0 else max(1, abs(delta)//120)
+            if getattr(event, "num", None) == 4:
+                units = -1
+            elif getattr(event, "num", None) == 5:
+                units = 1
+            dash_scroll_canvas.yview_scroll(units, "units")
+            return "break"
+        if isinstance(widget, (ttk.Combobox, tk.Spinbox, ttk.Treeview)):
+            return
+        widget = getattr(widget, "master", None)
+
+
 # ---------- Estado ----------
 current_page = "Dashboard"
 period_mode = tk.StringVar(value="Mês atual")
@@ -324,7 +410,7 @@ dashboard = tk.Frame(pages, bg=BG)
 page_frames["Dashboard"] = dashboard
 
 dash_scroll_canvas = tk.Canvas(dashboard, bg=BG, highlightthickness=0)
-dash_scroll = ttk.Scrollbar(dashboard, orient="vertical", command=dash_scroll_canvas.yview)
+dash_scroll = ModernScrollbar(dashboard, command=dash_scroll_canvas.yview, bg=BG)
 dash_body = tk.Frame(dash_scroll_canvas, bg=BG)
 
 dash_body.bind(
@@ -334,7 +420,10 @@ dash_body.bind(
 dash_scroll_canvas.create_window((0, 0), window=dash_body, anchor="nw")
 dash_scroll_canvas.configure(yscrollcommand=dash_scroll.set)
 dash_scroll_canvas.pack(side="left", fill="both", expand=True)
-dash_scroll.pack(side="right", fill="y")
+dash_scroll.pack(side="right", fill="y", padx=(0, 4))
+root.bind_all("<MouseWheel>", scroll_dashboard, add="+")
+root.bind_all("<Button-4>", scroll_dashboard, add="+")
+root.bind_all("<Button-5>", scroll_dashboard, add="+")
 
 dash_inner = tk.Frame(dash_body, bg=BG)
 dash_inner.pack(fill="both", expand=True, padx=28, pady=24)
@@ -547,7 +636,7 @@ for col, text, width in [
 tree.tag_configure("receita", foreground=GREEN)
 tree.tag_configure("despesa", foreground=RED)
 
-table_scroll = ttk.Scrollbar(table_box, orient="vertical", command=tree.yview)
+table_scroll = ModernScrollbar(table_box, command=tree.yview, bg=SURFACE)
 tree.configure(yscrollcommand=table_scroll.set)
 tree.pack(side="left", fill="both", expand=True, padx=(12, 0), pady=12)
 table_scroll.pack(side="right", fill="y", padx=(0, 12), pady=12)
