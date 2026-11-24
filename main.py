@@ -417,10 +417,16 @@ dash_body.bind(
     "<Configure>",
     lambda e: dash_scroll_canvas.configure(scrollregion=dash_scroll_canvas.bbox("all"))
 )
-dash_scroll_canvas.create_window((0, 0), window=dash_body, anchor="nw")
+dash_window = dash_scroll_canvas.create_window((0, 0), window=dash_body, anchor="nw")
+
+def resize_dashboard(event):
+    # A janela interna do Canvas não acompanha a largura automaticamente.
+    dash_scroll_canvas.itemconfigure(dash_window, width=max(1, event.width))
+
+dash_scroll_canvas.bind("<Configure>", resize_dashboard, add="+")
 dash_scroll_canvas.configure(yscrollcommand=dash_scroll.set)
-dash_scroll_canvas.pack(side="left", fill="both", expand=True)
 dash_scroll.pack(side="right", fill="y", padx=(0, 4))
+dash_scroll_canvas.pack(side="left", fill="both", expand=True)
 root.bind_all("<MouseWheel>", scroll_dashboard, add="+")
 root.bind_all("<Button-4>", scroll_dashboard, add="+")
 root.bind_all("<Button-5>", scroll_dashboard, add="+")
