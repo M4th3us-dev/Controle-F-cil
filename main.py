@@ -712,59 +712,92 @@ page_frames["Lançamentos"] = transactions
 tx_body = tk.Frame(transactions, bg=BG)
 tx_body.pack(fill="both", expand=True, padx=28, pady=24)
 
-tx_title = tk.Frame(tx_body, bg=BG)
-tx_title.pack(fill="x", pady=(0, 18))
+tx_summary = tk.Frame(tx_body, bg=BG)
+tx_summary.pack(fill="x", pady=(0, 16))
+tx_totals = {}
+for i, (nome, cor) in enumerate([("Receitas", GREEN), ("Despesas", RED), ("Saldo", PRIMARY)]):
+    tx_summary.columnconfigure(i, weight=1, uniform="resumo")
+    bloco = tk.Frame(tx_summary, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
+    bloco.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 6, 0 if i == 2 else 6))
+    tk.Label(bloco, text=nome, bg=SURFACE, fg=MUTED, font=(FONT, 10)).pack(anchor="w", padx=16, pady=(12, 2))
+    tx_totals[nome] = tk.Label(bloco, text=money(0), bg=SURFACE, fg=cor, font=(FONT, 19, "bold"))
+    tx_totals[nome].pack(anchor="w", padx=16, pady=(0, 12))
 
+tx_title = tk.Frame(tx_body, bg=BG)
+tx_title.pack(fill="x", pady=(0, 12))
 tx_actions = tk.Frame(tx_title, bg=BG)
 tx_actions.pack(side="right", anchor="e")
+tx_filters = tk.Frame(tx_body, bg=BG)
+tx_filters.pack(fill="x", pady=(0, 12))
+tx_search = tk.StringVar()
+tx_kind = tk.StringVar(value="Todos")
+tk.Label(tx_filters, text="Buscar categoria", bg=BG, fg=MUTED, font=(FONT, 10)).pack(side="left", padx=(0, 8))
+tk.Entry(tx_filters, textvariable=tx_search, font=(FONT, 11), relief="flat",
+         highlightthickness=1, highlightbackground=BORDER, highlightcolor=PRIMARY).pack(side="left", ipady=7, fill="x", expand=True)
+ttk.Combobox(tx_filters, textvariable=tx_kind, values=["Todos", "Receita", "Despesa"],
+             state="readonly", width=15, font=(FONT, 11)).pack(side="left", padx=12, ipady=4)
+tx_count = tk.Label(tx_body, bg=BG, fg=MUTED, font=(FONT, 10), anchor="w")
+tx_count.pack(side="bottom", fill="x", pady=(10, 0))
 
-# Tabela
 table_box = tk.Frame(tx_body, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
 table_box.pack(fill="both", expand=True)
-
-tree = ttk.Treeview(
-    table_box,
-    columns=("id", "tipo", "categoria", "data", "valor"),
-    show="headings",
-)
-for col, text, width in [
-    ("id", "ID", 70),
-    ("tipo", "TIPO", 120),
-    ("categoria", "CATEGORIA", 300),
-    ("data", "DATA", 160),
-    ("valor", "VALOR", 180),
+style.configure("Lancamentos.Treeview", rowheight=46, font=(FONT, 11),
+                background=SURFACE, fieldbackground=SURFACE, foreground=TEXT, borderwidth=0)
+style.configure("Lancamentos.Treeview.Heading", font=(FONT, 10, "bold"),
+                background="#F1F5F9", foreground=MUTED, relief="flat")
+style.map("Lancamentos.Treeview", background=[("selected", "#EEF2FF")],
+          foreground=[("selected", PRIMARY)])
+tree = ttk.Treeview(table_box, columns=("id", "tipo", "categoria", "data", "valor"),
+                    displaycolumns=("categoria", "tipo", "data", "valor"),
+                    show="headings", style="Lancamentos.Treeview", selectmode="browse")
+for col, titulo, largura, ancora in [
+    ("categoria", "CATEGORIA", 280, "w"), ("tipo", "TIPO", 125, "center"),
+    ("data", "DATA", 130, "center"), ("valor", "VALOR", 155, "e")
 ]:
-    tree.heading(col, text=text)
-    tree.column(col, width=width, anchor="center")
-
-tree.tag_configure("receita", foreground=GREEN)
-tree.tag_configure("despesa", foreground=RED)
+    tree.heading(col, text=titulo)
+    tree.column(col, width=largura, minwidth=80, anchor=ancora)
+tree.tag_configure("par", background=SURFACE)
+tree.tag_configure("impar", background="#F8FAFC")
+tx_records = {}
 
 table_scroll = ModernScrollbar(table_box, command=tree.yview, bg=SURFACE)
 tree.configure(yscrollcommand=table_scroll.set)
 tree.pack(side="left", fill="both", expand=True, padx=(12, 0), pady=12)
 table_scroll.pack(side="right", fill="y", padx=(0, 12), pady=12)
 
-
 def atualizar_tabela():
     for item in tree.get_children():
         tree.delete(item)
-
-    for item in tabela():
-        id_, tipo, categoria, data, valor = item
-        tag = "receita" if tipo == "Receita" else "despesa"
-        tree.insert(
-            "", "end",
-            values=(id_, tipo, categoria, data, money(valor)),
-            tags=(tag,),
-        )
-
+    tx_records.clear()
+    registros = tabela()
+    busca = tx_search.get().strip().casefold()
+    filtro = tx_kind.get()
+    filtrados = [r for r in registros if busca in str(r[2]).casefold()
+                 and (filtro == "Todos" or r[1] == filtro)]
+    receitas = sum(float(r[4]) for r in filtrados if r[1] == "Receita")
+    despesas = sum(float(r[4]) for r in filtrados if r[1] == "Despesa")
+    for nome, valor in [("Receitas", receitas), ("Despesas", despesas), ("Saldo", receitas-despesas)]:
+        tx_totals[nome].configure(text=money(valor))
+    tx_totals["Saldo"].configure(fg=PRIMARY if receitas >= despesas else RED)
+    for i, registro in enumerate(filtrados):
+        id_, tipo, categoria, data_, valor = registro
+        try:
+            data_visual = datetime.strptime(str(data_), "%Y-%m-%d").strftime("%d/%m/%Y")
+        except ValueError:
+            data_visual = str(data_)
+        iid = tree.insert("", "end", values=(id_, "↗ Receita" if tipo == "Receita" else "↘ Despesa",
+                          "   " + str(categoria), data_visual,
+                          ("+ " if tipo == "Receita" else "− ") + money(valor) + "   "),
+                          tags=("par" if i % 2 == 0 else "impar",))
+        tx_records[iid] = (id_, tipo, categoria, data_, money(valor))
+    tx_count.configure(text=f"{len(filtrados)} de {len(registros)} lançamentos • Resumo dos resultados exibidos")
     for item in recent_tree.get_children():
         recent_tree.delete(item)
+    for id_, tipo, categoria, data_, valor in registros[:5]:
+        recent_tree.insert("", "end", values=(tipo, categoria, data_, money(valor)))
 
-    for row in tabela()[:5]:
-        id_, tipo, categoria, data, valor = row
-        recent_tree.insert("", "end", values=(tipo, categoria, data, money(valor)))
+tx_search.trace_add("write", lambda *_: atualizar_tabela())
+tx_kind.trace_add("write", lambda *_: atualizar_tabela())
 
 # ============================================================
 # FORMULÁRIO DE LANÇAMENTO
@@ -844,7 +877,7 @@ def selected_transaction():
     selected = tree.focus()
     if not selected:
         raise ValueError("Selecione um lançamento na tabela.")
-    return tree.item(selected)["values"]
+    return tx_records[selected]
 
 
 def edit_selected():
