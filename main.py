@@ -1,5 +1,8 @@
 import sqlite3
-import csv
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.patches import FancyBboxPatch
+from matplotlib.ticker import FuncFormatter
+from textwrap import shorten
 from tkinter import filedialog
 import tkinter as tk
 from tkinter import ttk
@@ -459,7 +462,7 @@ def nav_button(label, icon, command):
 content = tk.Frame(root, bg=BG)
 content.pack(side="left", fill="both", expand=True)
 
-header = tk.Frame(content, bg=SURFACE, height=72, highlightbackground=BORDER, highlightthickness=1)
+header = tk.Frame(content, bg=SURFACE, height=88, highlightbackground=BORDER, highlightthickness=1)
 header.pack(fill="x")
 header.pack_propagate(False)
 
@@ -711,7 +714,6 @@ tx_body.pack(fill="both", expand=True, padx=28, pady=24)
 
 tx_title = tk.Frame(tx_body, bg=BG)
 tx_title.pack(fill="x", pady=(0, 18))
-section_title(tx_title, "Lançamentos", "Consulte, edite e exclua suas receitas e despesas.")
 
 tx_actions = tk.Frame(tx_title, bg=BG)
 tx_actions.pack(side="right", anchor="e")
@@ -945,7 +947,6 @@ cat_body.pack(fill="both", expand=True, padx=28, pady=24)
 
 cat_head = tk.Frame(cat_body, bg=BG)
 cat_head.pack(fill="x", pady=(0, 18))
-section_title(cat_head, "Categorias", "Organize seus gastos do seu jeito.")
 
 cat_list_box = tk.Frame(cat_body, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
 cat_list_box.pack(fill="both", expand=True)
@@ -1104,37 +1105,79 @@ page_frames["Relatórios"] = reports
 rep_body = tk.Frame(reports, bg=BG)
 rep_body.pack(fill="both", expand=True, padx=28, pady=24)
 
-section_title(
-    rep_body,
-    "Relatórios",
-    "Resumo consolidado dos dados cadastrados no sistema."
-)
 
 rep_period_label = tk.Label(rep_body, text="", bg=BG, fg=MUTED, font=(FONT, 10))
 rep_period_label.pack(anchor="w")
 rep_actions = tk.Frame(rep_body, bg=BG)
 rep_actions.pack(fill="x", pady=(10, 0))
 
-def exportar_relatorio_csv():
+def exportar_relatorio_pdf():
     try:
         ano, mes = periodo_selecionado()
         rows = lancamentos_periodo(ano, mes)
+        receita, despesa, saldo = resumo_periodo(ano, mes)
+        pares = despesas_por_categoria(ano, mes)
+        periodo = f"{mes:02d}/{ano}" if mes else "Todos os períodos"
         destino = filedialog.asksaveasfilename(
-            title="Exportar relatório", defaultextension=".csv",
-            filetypes=[("Arquivo CSV", "*.csv")],
-            initialfile="controle_facil_relatorio.csv",
+            title="Exportar relatório PDF", defaultextension=".pdf",
+            filetypes=[("Documento PDF", "*.pdf")],
+            initialfile="controle_facil_relatorio.pdf",
         )
         if not destino:
             return
-        with open(destino, "w", encoding="utf-8-sig", newline="") as arquivo:
-            writer = csv.writer(arquivo, delimiter=";")
-            writer.writerow(["ID", "Tipo", "Categoria", "Data", "Valor (R$)"])
-            writer.writerows(rows)
-        messagebox.showinfo("Relatório exportado", "Arquivo CSV salvo com sucesso.")
+
+        def pagina(pdf, titulo, cabecalho, linhas, larguras, resumo=False):
+            fig = plt.figure(figsize=(8.27, 11.69), facecolor=SURFACE)
+            try:
+                fig.text(.08, .95, "CONTROLE FÁCIL", fontsize=20, weight="bold", color=PRIMARY)
+                fig.text(.08, .915, titulo, fontsize=15, weight="bold", color=TEXT)
+                fig.text(.08, .89, f"Período: {periodo}", fontsize=10, color=MUTED)
+                topo = .85
+                if resumo:
+                    for i, (nome, valor, cor) in enumerate([
+                        ("Receitas", receita, GREEN), ("Despesas", despesa, RED),
+                        ("Saldo", saldo, PRIMARY if saldo >= 0 else RED)
+                    ]):
+                        x = .08 + i * .29
+                        fig.text(x, .845, nome, fontsize=10, color=MUTED)
+                        fig.text(x, .815, money(valor), fontsize=12, weight="bold", color=cor)
+                    topo = .77
+                altura = min(.69, .035 * (len(linhas) + 1))
+                ax = fig.add_axes([.08, topo-altura, .84, altura])
+                ax.axis("off")
+                tabela_pdf = ax.table(cellText=linhas or [["—"] * len(cabecalho)],
+                                      colLabels=cabecalho, colWidths=larguras,
+                                      cellLoc="left", bbox=[0, 0, 1, 1])
+                tabela_pdf.auto_set_font_size(False)
+                tabela_pdf.set_fontsize(9)
+                for (linha, coluna), celula in tabela_pdf.get_celld().items():
+                    celula.set_edgecolor(BORDER)
+                    celula.set_facecolor(PRIMARY if linha == 0 else (BG if linha % 2 == 0 else SURFACE))
+                    celula.set_text_props(color=SURFACE if linha == 0 else TEXT,
+                                         weight="bold" if linha == 0 else "normal")
+                fig.text(.08, .045, "Controle Fácil | Relatório financeiro pessoal", fontsize=9, color=MUTED)
+                fig.text(.92, .045, str(pdf.get_pagecount()+1), ha="right", fontsize=9, color=MUTED)
+                pdf.savefig(fig)
+            finally:
+                plt.close(fig)
+
+        with PdfPages(destino) as pdf:
+            categorias_pdf = [[shorten(str(n), width=45, placeholder="…"), money(v),
+                               f"{v/despesa*100:.1f}%" if despesa else "0%"] for n, v in pares]
+            for i in range(0, max(1, len(categorias_pdf)), 18):
+                pagina(pdf, "Resumo financeiro e despesas por categoria",
+                       ["Categoria", "Total gasto", "%"], categorias_pdf[i:i+18],
+                       [.50, .30, .20], resumo=True)
+            movimentos = [[str(id_), str(tipo), shorten(str(cat), width=32, placeholder="…"),
+                           str(data_), money(valor)] for id_, tipo, cat, data_, valor in rows]
+            for i in range(0, max(1, len(movimentos)), 19):
+                pagina(pdf, "Movimentações", ["ID", "Tipo", "Categoria", "Data", "Valor"],
+                       movimentos[i:i+19], [.08, .16, .32, .19, .25])
+        messagebox.showinfo("Relatório exportado", "Arquivo PDF salvo com sucesso.")
     except Exception as exc:
         messagebox.showerror("Erro na exportação", str(exc))
 
-make_button(rep_actions, "Exportar CSV (Excel)", exportar_relatorio_csv).pack(side="left")
+make_button(rep_actions, "Exportar PDF", exportar_relatorio_pdf).pack(side="left")
 
 def navegar_mes(delta):
     try:
@@ -1197,7 +1240,6 @@ page_frames["Configurações"] = settings
 set_body = tk.Frame(settings, bg=BG)
 set_body.pack(fill="both", expand=True, padx=28, pady=24)
 
-section_title(settings if False else set_body, "Configurações", "Informações da aplicação.")
 
 info = tk.Frame(set_body, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
 info.pack(fill="x", pady=18)
@@ -1284,33 +1326,60 @@ def update_dashboard():
     for child in chart_right_area.winfo_children():
         child.destroy()
 
-    fig1, ax1 = plt.subplots(figsize=(5.8, 2.7), dpi=85)
-    ax1.bar(["Receitas", "Despesas", "Saldo"], [receita, despesa, saldo])
-    ax1.set_ylabel("R$")
-    ax1.grid(axis="y", alpha=0.15)
-    fig1.tight_layout()
+    fig1, ax1 = plt.subplots(figsize=(5.8, 2.7), dpi=100, facecolor=SURFACE)
+    ax1.set_facecolor(SURFACE)
+    numeros = [receita, despesa, saldo]
+    cores = [GREEN, RED, PRIMARY if saldo >= 0 else RED]
+    escala = max(max(numeros), 0) - min(min(numeros), 0)
+    escala = escala or 1
+    ax1.set_xlim(-.65, 2.65)
+    ax1.set_ylim(min(0, min(numeros)) - escala*.18, max(0, max(numeros)) + escala*.25)
+    for i, (valor, cor) in enumerate(zip(numeros, cores)):
+        if valor:
+            # Arredondamento em coordenadas normalizadas para evitar distorção.
+            transform = ax1.transData
+            ax1.add_patch(FancyBboxPatch((i-.26, min(0, valor)), .52, abs(valor),
+                          boxstyle="round,pad=0,rounding_size=0.07",
+                          mutation_aspect=escala/3, facecolor=cor, edgecolor="none",
+                          transform=transform, zorder=3))
+        ax1.annotate(money(valor), (i, valor), xytext=(0, 7 if valor >= 0 else -7),
+                     textcoords="offset points", ha="center", va="bottom" if valor >= 0 else "top",
+                     fontsize=9, weight="bold", color=cor)
+    ax1.set_xticks([0, 1, 2], ["Receitas", "Despesas", "Saldo"])
+    ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: money(v).split(",")[0]))
+    ax1.tick_params(axis="both", length=0, labelsize=9, colors=MUTED)
+    ax1.grid(axis="y", color=BORDER, linestyle="--", linewidth=.8)
+    ax1.axhline(0, color=BORDER, linewidth=1)
+    for spine in ax1.spines.values():
+        spine.set_visible(False)
+    fig1.tight_layout(pad=1.5)
     canvas1 = FigureCanvasTkAgg(fig1, master=chart_left_area)
     canvas1.draw()
     canvas1.get_tk_widget().pack(fill="both", expand=True)
     plt.close(fig1)
 
     pares = despesas_por_categoria(ano, mes)
+    pares = [(n, v) for n, v in pares if v > 0]
+    if len(pares) > 5:
+        pares = pares[:4] + [("Outras categorias", sum(v for _, v in pares[4:]))]
     categorias, valores = [p[0] for p in pares], [p[1] for p in pares]
-    fig2, ax2 = plt.subplots(figsize=(5.8, 2.7), dpi=85)
+    fig2, ax2 = plt.subplots(figsize=(5.8, 2.7), dpi=100, facecolor=SURFACE)
     if valores:
-        ax2.pie(
-            valores,
-            labels=categorias,
-            autopct="%1.0f%%",
-            startangle=90,
-            textprops={"fontsize": 8},
-        )
-        ax2.axis("equal")
+        paleta = [PRIMARY, "#F59E0B", "#0D9488", "#EC4899", "#64748B"]
+        fatias, _ = ax2.pie(valores, colors=paleta[:len(valores)], startangle=90,
+                            counterclock=False, wedgeprops={"width": .30, "edgecolor": SURFACE, "linewidth": 2})
+        ax2.text(0, .12, "Total de gastos", ha="center", fontsize=9, color=MUTED)
+        ax2.text(0, -.12, money(sum(valores)), ha="center", fontsize=11, weight="bold", color=TEXT)
+        etiquetas = [f"{shorten(str(n), width=20, placeholder='…')}  {v/sum(valores):.1%}"
+                     for n, v in pares]
+        ax2.legend(fatias, etiquetas, loc="center left", bbox_to_anchor=(1, .5),
+                   frameon=False, fontsize=9, labelcolor=TEXT)
+        ax2.set_aspect("equal")
     else:
-        ax2.text(0.5, 0.5, "Nenhuma despesa cadastrada",
-                 ha="center", va="center", fontsize=10)
-        ax2.axis("off")
-    fig2.tight_layout()
+        ax2.text(.5, .5, "Nenhuma despesa cadastrada", ha="center", va="center",
+                 fontsize=10, color=MUTED, transform=ax2.transAxes)
+    ax2.axis("off")
+    fig2.tight_layout(pad=1)
     canvas2 = FigureCanvasTkAgg(fig2, master=chart_right_area)
     canvas2.draw()
     canvas2.get_tk_widget().pack(fill="both", expand=True)
