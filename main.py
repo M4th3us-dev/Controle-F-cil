@@ -2,7 +2,7 @@ import sqlite3
 import csv
 from tkinter import filedialog
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 from datetime import date, datetime
 
 import matplotlib.pyplot as plt
@@ -66,6 +66,102 @@ root.title("Controle Fácil")
 root.geometry("1280x800")
 root.minsize(1080, 700)
 root.configure(bg=BG)
+
+
+# ---------- Diálogos personalizados ----------
+class Dialogos:
+    @staticmethod
+    def _abrir(titulo, mensagem, tipo, parent=None):
+        parent = parent or root
+        anterior = parent.grab_current()
+        win = tk.Toplevel(parent)
+        win.withdraw()
+        win.title(titulo)
+        win.transient(parent)
+        win.resizable(False, False)
+        win.configure(bg=SURFACE)
+        confirmacao = tipo == "confirmacao"
+        cor, fundo, simbolo = {
+            "confirmacao": (RED, RED_BG, "!"),
+            "erro": (RED, RED_BG, "!"),
+            "aviso": (ORANGE, ORANGE_BG, "!"),
+            "info": (GREEN, GREEN_BG, "✓"),
+        }[tipo]
+        resultado = False
+
+        def fechar(valor=False):
+            nonlocal resultado
+            resultado = valor
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", fechar)
+        win.bind("<Escape>", lambda event: fechar())
+        corpo = tk.Frame(win, bg=SURFACE, padx=24, pady=22)
+        corpo.pack(fill="both", expand=True)
+        tk.Label(corpo, text=simbolo, font=(FONT, 20, "bold"),
+                 fg=cor, bg=fundo, width=3, pady=6).pack(anchor="w")
+        tk.Label(corpo, text=titulo, font=(FONT, 17, "bold"),
+                 fg=TEXT, bg=SURFACE, wraplength=390, justify="left").pack(anchor="w", pady=(14, 8))
+        partes = str(mensagem).split("\n\n", 1) if confirmacao else [str(mensagem)]
+        tk.Label(corpo, text=partes[0], font=(FONT, 11), fg=MUTED,
+                 bg=SURFACE, wraplength=390, justify="left").pack(anchor="w", fill="x")
+        if len(partes) > 1:
+            tk.Label(corpo, text=partes[1], font=(FONT, 11, "bold"),
+                     fg=TEXT, bg=BG, padx=12, pady=12, wraplength=365,
+                     justify="left", anchor="w").pack(fill="x", pady=(12, 0))
+        if confirmacao:
+            tk.Label(corpo, text="Esta ação não poderá ser desfeita.",
+                     font=(FONT, 10), fg=RED, bg=SURFACE,
+                     wraplength=390, justify="left").pack(anchor="w", pady=(12, 0))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        rodape = tk.Frame(win, bg=BG, padx=24, pady=14)
+        rodape.pack(fill="x")
+
+        def botao(texto, comando, bg, fg, hover):
+            b = tk.Button(rodape, text=texto, command=comando, bg=bg, fg=fg,
+                          activebackground=hover, activeforeground=fg,
+                          font=(FONT, 10, "bold"), relief="flat", bd=0,
+                          padx=18, pady=9, cursor="hand2", highlightthickness=1,
+                          highlightbackground=BORDER)
+            b.bind("<Enter>", lambda event: b.configure(bg=hover))
+            b.bind("<Leave>", lambda event: b.configure(bg=bg))
+            b.pack(side="right", padx=(8, 0))
+            return b
+
+        principal = botao("Excluir" if confirmacao else "Entendi",
+                          lambda: fechar(True), RED if confirmacao else PRIMARY,
+                          SURFACE, "#B91C1C" if confirmacao else PRIMARY_HOVER)
+        seguro = botao("Cancelar", fechar, SURFACE, TEXT, "#E5E7EB") if confirmacao else principal
+        win.bind("<Return>", lambda event: seguro.invoke())
+        win.update_idletasks()
+        largura = max(440, win.winfo_reqwidth())
+        altura = win.winfo_reqheight()
+        x = max(0, parent.winfo_rootx() + (parent.winfo_width() - largura) // 2)
+        y = max(0, parent.winfo_rooty() + (parent.winfo_height() - altura) // 2)
+        win.geometry(f"{largura}x{altura}+{x}+{y}")
+        win.deiconify()
+        win.wait_visibility()
+        win.grab_set()
+        seguro.focus_set()
+        parent.wait_window(win)
+        if anterior is not None and anterior.winfo_exists():
+            anterior.grab_set()
+        return resultado
+
+    def askyesno(self, titulo, mensagem, parent=None):
+        return self._abrir(titulo, mensagem, "confirmacao", parent)
+
+    def showinfo(self, titulo, mensagem, parent=None):
+        return self._abrir(titulo, mensagem, "info", parent)
+
+    def showwarning(self, titulo, mensagem, parent=None):
+        return self._abrir(titulo, mensagem, "aviso", parent)
+
+    def showerror(self, titulo, mensagem, parent=None):
+        return self._abrir(titulo, mensagem, "erro", parent)
+
+
+messagebox = Dialogos()
 
 # ---------- ttk ----------
 style = ttk.Style(root)
@@ -822,8 +918,8 @@ def delete_selected():
         return
 
     if not messagebox.askyesno(
-        "Confirmar exclusão",
-        f"Tem certeza que deseja excluir este {tipo.lower()}?\n\n{categoria} — {valor}",
+        f"Excluir {tipo.lower()}?",
+        f"Tem certeza de que deseja excluir esta {tipo.lower()}?\n\n{categoria} — {valor}",
     ):
         return
 
@@ -989,7 +1085,7 @@ def delete_selected_category():
     except ValueError as exc:
         messagebox.showwarning("Atenção", str(exc))
         return
-    if not messagebox.askyesno("Confirmar exclusão", f"Excluir a categoria '{nome}'?"):
+    if not messagebox.askyesno("Excluir categoria?", f"Tem certeza de que deseja excluir esta categoria?\n\n{nome}"):
         return
     try:
         excluir_categoria(id_)
