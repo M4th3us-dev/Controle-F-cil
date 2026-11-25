@@ -10,10 +10,11 @@ from datetime import date, datetime
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from tkcalendar import DateEntry
+from tkcalendar import Calendar
 
 from view import (
     inicializar_banco,
+    validar_data,
     inserir_categoria,
     editar_categoria,
     excluir_categoria,
@@ -805,6 +806,53 @@ tx_kind.trace_add("write", lambda *_: atualizar_tabela())
 # FORMULÁRIO DE LANÇAMENTO
 # ============================================================
 
+class CampoData(tk.Frame):
+    """Entrada manual sem correção silenciosa e calendário modal."""
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, bg=SURFACE)
+        self.entry = ttk.Entry(self, font=kwargs.get("font", (FONT, 10)))
+        self.entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(self, text="▼", width=4, command=self.abrir_calendario).pack(side="right")
+
+    def get(self):
+        return self.entry.get()
+
+    def set_date(self, valor):
+        self.entry.delete(0, "end")
+        self.entry.insert(0, valor.strftime("%d/%m/%Y"))
+
+    def get_date(self):
+        return date.fromisoformat(validar_data(self.get()))
+
+    def abrir_calendario(self):
+        parent = self.winfo_toplevel()
+        anterior = parent.grab_current()
+        try:
+            inicial = self.get_date()
+        except ValueError:
+            inicial = date.today()
+        popup = tk.Toplevel(parent)
+        popup.title("Escolher data")
+        popup.transient(parent)
+        popup.resizable(False, False)
+        calendario = Calendar(popup, selectmode="day", locale="pt_BR",
+                              year=inicial.year, month=inicial.month, day=inicial.day,
+                              date_pattern="dd/mm/yyyy")
+        calendario.pack(padx=12, pady=12)
+
+        def confirmar():
+            self.set_date(calendario.selection_get())
+            popup.destroy()
+
+        ttk.Button(popup, text="Selecionar data", command=confirmar).pack(pady=(0, 12))
+        popup.bind("<Escape>", lambda event: popup.destroy())
+        popup.wait_visibility()
+        popup.grab_set()
+        parent.wait_window(popup)
+        if anterior is not None and anterior.winfo_exists():
+            anterior.grab_set()
+
+
 def open_transaction_dialog(kind="Despesa"):
     win = tk.Toplevel(root)
     win.title(f"Nova {kind}")
@@ -842,7 +890,7 @@ def open_transaction_dialog(kind="Despesa"):
         combo.set(categories[0])
 
     tk.Label(body, text="Data", bg=SURFACE, fg=MUTED, font=(FONT, 9, "bold")).pack(anchor="w")
-    cal = DateEntry(body, date_pattern="dd/mm/yyyy", font=(FONT, 10))
+    cal = CampoData(body, font=(FONT, 10))
     cal.set_date(date.today())
     cal.pack(fill="x", pady=(5, 15))
 
@@ -918,7 +966,7 @@ def edit_selected():
 
     tk.Label(body, text="Data", bg=SURFACE, fg=MUTED,
              font=(FONT, 9, "bold")).pack(anchor="w")
-    data_entry = DateEntry(body, date_pattern="dd/mm/yyyy", font=(FONT, 10))
+    data_entry = CampoData(body, font=(FONT, 10))
     data_entry.pack(fill="x", pady=(5, 15))
     data_entry.set_date(date.fromisoformat(data))
 
