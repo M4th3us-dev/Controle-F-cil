@@ -769,7 +769,8 @@ def atualizar_tabela():
     for item in tree.get_children():
         tree.delete(item)
     tx_records.clear()
-    registros = tabela()
+    ano, mes = periodo_selecionado()
+    registros = lancamentos_periodo(ano, mes)
     busca = tx_search.get().strip().casefold()
     filtro = tx_kind.get()
     filtrados = [r for r in registros if busca in str(r[2]).casefold()
@@ -790,7 +791,8 @@ def atualizar_tabela():
                           ("+ " if tipo == "Receita" else "− ") + money(valor) + "   "),
                           tags=("par" if i % 2 == 0 else "impar",))
         tx_records[iid] = (id_, tipo, categoria, data_, money(valor))
-    tx_count.configure(text=f"{len(filtrados)} de {len(registros)} lançamentos • Resumo dos resultados exibidos")
+    periodo = f"{mes:02d}/{ano}" if mes else "Todos os períodos"
+    tx_count.configure(text=f"{periodo} • {len(filtrados)} de {len(registros)} lançamentos • Resumo dos resultados exibidos")
     for item in recent_tree.get_children():
         recent_tree.delete(item)
     for id_, tipo, categoria, data_, valor in registros[:5]:
